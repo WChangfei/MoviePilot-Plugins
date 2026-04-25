@@ -10,7 +10,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app import schemas
 from app.chain.download import DownloadChain
-from app.chain.media import MediaChain
 from app.chain.subscribe import SubscribeChain
 from app.core.config import settings
 from app.core.context import MediaInfo
@@ -18,6 +17,7 @@ from app.core.metainfo import MetaInfo
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import MediaType
+from app.schemas.types import NotificationType
 from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
 
@@ -45,6 +45,8 @@ class DoubanRankV2(_PluginBase):
     # 退出事件
     _event = Event()
     # 私有属性
+    downloadchain: DownloadChain = None
+    subscribechain: SubscribeChain = None
     _scheduler = None
     _douban_address = {
         'movie-ustop': '/douban/movie/ustop',
@@ -68,6 +70,8 @@ class DoubanRankV2(_PluginBase):
     _rsshub = "https://rsshub.ddsrem.com/"
 
     def init_plugin(self, config: dict = None):
+        self.downloadchain = DownloadChain()
+        self.subscribechain = SubscribeChain()
 
         if config:
             self._enabled = config.get("enabled")
@@ -552,8 +556,10 @@ class DoubanRankV2(_PluginBase):
         # 读取历史记录
         if self._clearflag:
             history = []
+            self.save_data('history', history)
         else:
             history: List[dict] = self.get_data('history') or []
+        unique_history = {item.get("unique") for item in history}
 
         for addr in addr_list:
             if not addr:
@@ -570,73 +576,78 @@ class DoubanRankV2(_PluginBase):
                     if self._event.is_set():
                         logger.info(f"订阅服务停止")
                         return
-                    mtype = None
                     title = rss_info.get('title')
                     douban_id = rss_info.get('doubanid')
                     year = rss_info.get('year')
                     type_str = rss_info.get('type')
-                    if type_str == "movie":
-                        mtype = MediaType.MOVIE
-                    elif type_str:
-                        mtype = MediaType.TV
                     unique_flag = f"doubanrankv2: {title} (DB:{douban_id})"
+                    logger.info(f"\n")
+                    logger.info(f"标题：{title}")
+
                     # 检查是否已处理过
-                    if unique_flag in [h.get("unique") for h in history]:
+                    if unique_flag in unique_history:
+                        logger.info(f"{title} 已处理过")
                         continue
+
                     # 元数据
                     meta = MetaInfo(title)
-                    meta.year = year
-                    if mtype:
-                        meta.type = mtype
-                    if meta.type not in (MediaType.MOVIE, MediaType.TV):
-                        meta.type = None
+                    if year:
+                        meta.year = year
+                    if type_str == "movie":
+                        meta.type = MediaType.MOVIE
+                    elif type_str:
+                        meta.type = MediaType.TV
+
                     # 识别媒体信息
                     if douban_id:
-                        # 识别豆瓣信息
-                        if settings.RECOGNIZE_SOURCE == "themoviedb":
-                            tmdbinfo = MediaChain().get_tmdbinfo_by_doubanid(doubanid=douban_id, mtype=meta.type)
-                            if not tmdbinfo:
-                                logger.warn(
-                                    f'未能通过豆瓣ID {douban_id} 获取到TMDB信息，标题：{title}，豆瓣ID：{douban_id}')
-                                continue
-                            meta.type = tmdbinfo.get('media_type')
-                            mediainfo = self.chain.recognize_media(meta=meta, tmdbid=tmdbinfo.get("id"))
-                            if not mediainfo:
-                                logger.warn(f'TMDBID {tmdbinfo.get("id")} 未识别到媒体信息')
-                                continue
-                        else:
-                            mediainfo = self.chain.recognize_media(meta=meta, doubanid=douban_id)
-                            if not mediainfo:
-                                logger.warn(f'豆瓣ID {douban_id} 未识别到媒体信息')
-                                continue
+                        mediainfo = self.chain.recognize_media(meta=meta, doubanid=douban_id)
                     else:
-                        # 匹配媒体信息
                         mediainfo: MediaInfo = self.chain.recognize_media(meta=meta)
-                        if not mediainfo:
-                            logger.warn(f'未识别到媒体信息，标题：{title}，豆瓣ID：{douban_id}')
-                            continue
+
+                    if not mediainfo:
+                        logger.warn(f'未识别到媒体信息，标题：{title}，豆瓣ID：{douban_id}')
+                        continue
+
                     # 判断评分是否符合要求
                     if self._vote and mediainfo.vote_average < self._vote:
                         logger.info(f'{mediainfo.title_year} 评分不符合要求')
                         continue
+
                     # 查询缺失的媒体信息
-                    exist_flag, _ = DownloadChain().get_no_exists_info(meta=meta, mediainfo=mediainfo)
+                    exist_flag, _ = self.downloadchain.get_no_exists_info(meta=meta, mediainfo=mediainfo)
                     if exist_flag:
                         logger.info(f'{mediainfo.title_year} 媒体库中已存在')
                         continue
+
                     # 判断用户是否已经添加订阅
-                    subscribechain = SubscribeChain()
-                    if subscribechain.exists(mediainfo=mediainfo, meta=meta):
+                    if self.subscribechain.exists(mediainfo=mediainfo, meta=meta):
                         logger.info(f'{mediainfo.title_year} 订阅已存在')
                         continue
+
                     # 添加订阅
-                    subscribechain.add(title=mediainfo.title,
-                                       year=mediainfo.year,
-                                       mtype=mediainfo.type,
-                                       tmdbid=mediainfo.tmdb_id,
-                                       season=meta.begin_season,
-                                       exist_ok=True,
-                                       username="豆瓣榜单")
+                    sid, msg = self.subscribechain.add(
+                        title=mediainfo.title,
+                        year=mediainfo.year or year or "",
+                        mtype=mediainfo.type,
+                        tmdbid=mediainfo.tmdb_id,
+                        season=meta.begin_season,
+                        exist_ok=True,
+                        username="豆瓣榜单"
+                    )
+                    if not sid:
+                        logger.error(f"{title} 订阅失败：{msg}")
+                        continue
+
+                    # 发送消息通知
+                    self.post_message(
+                        mtype=NotificationType.Subscribe,
+                        title=f"{mediainfo.title_year} 已添加订阅",
+                        text=f"{rss_info.get('description', '') or mediainfo.overview or ''}\n{self.__build_douban_dispatch_link(rss_info.get('link', ''))}\n\n[{self.plugin_name}]",
+                        image=mediainfo.get_message_image(),
+                        link=settings.MP_DOMAIN("#/subscribe")
+                    )
+                    logger.info(f"{title} 已添加订阅")
+
                     # 存储历史记录
                     history.append({
                         "title": title,
@@ -649,6 +660,7 @@ class DoubanRankV2(_PluginBase):
                         "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "unique": unique_flag
                     })
+                    unique_history.add(unique_flag)
             except Exception as e:
                 logger.error(str(e))
 
@@ -714,3 +726,13 @@ class DoubanRankV2(_PluginBase):
         except Exception as e:
             logger.error("获取RSS失败：" + str(e))
             return []
+
+    @staticmethod
+    def __build_douban_dispatch_link(link: str) -> str:
+        if not link:
+            return ""
+        match = re.search(r"/(\d+)(?=/|$)", link)
+        if not match:
+            return link
+        subject_id = match.group(1)
+        return f"https://www.douban.com/doubanapp/dispatch?uri=/movie/{subject_id}?from=mdouban&open=app"
