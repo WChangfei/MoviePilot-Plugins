@@ -1,0 +1,14 @@
+{
+  "DouBanRankV2": {
+    "name": "豆瓣订阅修改版",
+    "description": "修复官方插件无法识别到媒体信息的问题",
+    "version": "1.0.0",
+    "v2": true,
+    "history": {
+      "v1.0": "初始化，修改官方模板"
+    },
+    "icon": "https://raw.githubusercontent.com/honue/MoviePilot-Plugins/main/icons/douban.png",
+    "author": "WChangFei",
+    "level": 1
+  }
+}
