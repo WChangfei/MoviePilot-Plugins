@@ -32,7 +32,7 @@ class DoubanRankV3(_PluginBase):
     # 插件图标
     plugin_icon = "movie.jpg"
     # 插件版本
-    plugin_version = "1.0.7"
+    plugin_version = "1.0.9"
     # 插件作者
     plugin_author = "WChangFei"
     # 作者主页
@@ -641,48 +641,95 @@ class DoubanRankV3(_PluginBase):
                     continue
                 else:
                     logger.info(f"RSS地址：{addr} ，共 {len(rss_infos)} 条数据")
-                for rss_info in rss_infos:
-                    if self._event.is_set():
-                        logger.info(f"订阅服务停止")
-                        return
-                    mtype = None
-                    title = rss_info.get("title")
-                    douban_id = rss_info.get("doubanid")
-                    year = rss_info.get("year")
-                    # 尝试转换年份为整数
-                    year_int = None
-                    if year:
-                        try:
-                            year_int = int(year)
-                        except (ValueError, TypeError):
-                            pass
-                    type_str = rss_info.get("type")
-                    if type_str == "movie":
-                        mtype = MediaType.MOVIE
-                    elif type_str:
-                        mtype = MediaType.TV
-                    unique_flag = f"doubanrankV3: {title} (DB:{douban_id})"
-                    # 检查是否已处理过
-                    if unique_flag in [h.get("unique") for h in history]:
-                        continue
-                    # 检查标题黑名单
-                    blacklisted = False
-                    if self._title_blacklist:
-                        title_lower = title.lower()
-                        for keyword in self._title_blacklist:
-                            if keyword.lower() in title_lower:
-                                logger.info(
-                                    f"{title} 标题包含黑名单关键字 '{keyword}'，跳过"
-                                )
-                                blacklisted = True
-                                break
-                    # 先检查RSS中的年份（如果有的话）
-                    year_invalid = False
-                    if self._min_year and year_int and year_int < self._min_year:
-                        logger.info(f"{title} ({year}) 年份不符合要求")
-                        year_invalid = True
-                    # 如果命中黑名单或年份不符合要求，尝试识别媒体信息并取消订阅
-                    if blacklisted or year_invalid:
+                for idx, rss_info in enumerate(rss_infos, 1):
+                    logger.info(f"正在处理第 {idx}/{len(rss_infos)} 条数据")
+                    try:
+                        if self._event.is_set():
+                            logger.info(f"订阅服务停止")
+                            return
+                        mtype = None
+                        title = rss_info.get("title")
+                        douban_id = rss_info.get("doubanid")
+                        year = rss_info.get("year")
+                        # 尝试转换年份为整数
+                        year_int = None
+                        if year:
+                            try:
+                                year_int = int(year)
+                            except (ValueError, TypeError):
+                                pass
+                        type_str = rss_info.get("type")
+                        if type_str == "movie":
+                            mtype = MediaType.MOVIE
+                        elif type_str:
+                            mtype = MediaType.TV
+                        unique_flag = f"doubanrankV3: {title} (DB:{douban_id})"
+                        # 检查是否已处理过
+                        if unique_flag in [h.get("unique") for h in history]:
+                            continue
+                        # 检查标题黑名单
+                        blacklisted = False
+                        if self._title_blacklist:
+                            title_lower = title.lower()
+                            for keyword in self._title_blacklist:
+                                if keyword.lower() in title_lower:
+                                    logger.info(
+                                        f"{title} 标题包含黑名单关键字 '{keyword}'，跳过"
+                                    )
+                                    blacklisted = True
+                                    break
+                        # 先检查RSS中的年份（如果有的话）
+                        year_invalid = False
+                        if self._min_year and year_int and year_int < self._min_year:
+                            logger.info(f"{title} ({year}) 年份不符合要求")
+                            year_invalid = True
+                        # 如果命中黑名单或年份不符合要求，尝试识别媒体信息并取消订阅
+                        if blacklisted or year_invalid:
+                            # 元数据
+                            meta = MetaInfo(title)
+                            meta.year = year
+                            if mtype:
+                                meta.type = mtype
+                            if meta.type not in (MediaType.MOVIE, MediaType.TV):
+                                meta.type = None
+                            # 匹配媒体信息
+                            mediainfo = self.chain.recognize_media(meta=meta)
+                            if mediainfo:
+                                # 判断用户是否已经添加订阅，如果是则取消订阅
+                                try:
+                                    subscribeoper = SubscribeOper()
+                                    subscribehelper = SubscribeHelper()
+                                    # 查找订阅
+                                    subscribes = subscribeoper.list()
+                                    for subscribe in subscribes:
+                                        if (
+                                            subscribe.tmdbid == mediainfo.tmdb_id
+                                            or subscribe.doubanid == mediainfo.douban_id
+                                        ):
+                                            if (
+                                                meta.begin_season is None
+                                                or subscribe.season == meta.begin_season
+                                            ):
+                                                logger.info(
+                                                    f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
+                                                )
+                                                # 新增订阅历史
+                                                subscribeoper.add_history(
+                                                    **subscribe.to_dict()
+                                                )
+                                                # 删除订阅
+                                                subscribeoper.delete(subscribe.id)
+                                                # 统计订阅
+                                                subscribehelper.sub_done_async(
+                                                    {
+                                                        "tmdbid": subscribe.tmdbid,
+                                                        "doubanid": subscribe.doubanid,
+                                                    }
+                                                )
+                                                break
+                                except Exception as e:
+                                    logger.error(f"删除订阅时出错: {str(e)}")
+                            continue
                         # 元数据
                         meta = MetaInfo(title)
                         meta.year = year
@@ -690,149 +737,108 @@ class DoubanRankV3(_PluginBase):
                             meta.type = mtype
                         if meta.type not in (MediaType.MOVIE, MediaType.TV):
                             meta.type = None
+                        # 识别媒体信息
+                        # if douban_id:
+                        #     # 识别豆瓣信息
+                        #     if settings.RECOGNIZE_SOURCE == "themoviedb":
+                        #         tmdbinfo = MediaChain().get_tmdbinfo_by_doubanid(
+                        #             doubanid=douban_id, mtype=meta.type
+                        #         )
+                        #         if not tmdbinfo:
+                        #             logger.warn(
+                        #                 f"未能通过豆瓣ID {douban_id} 获取到TMDB信息，标题：{title}，豆瓣ID：{douban_id}"
+                        #             )
+                        #             continue
+                        #         meta.type = tmdbinfo.get("media_type")
+                        #         mediainfo = self.chain.recognize_media(
+                        #             meta=meta, tmdbid=tmdbinfo.get("id")
+                        #         )
+                        #         if not mediainfo:
+                        #             logger.warn(
+                        #                 f'TMDBID {tmdbinfo.get("id")} 未识别到媒体信息'
+                        #             )
+                        #             continue
+                        #     else:
+                        #         mediainfo = self.chain.recognize_media(
+                        #             meta=meta, doubanid=douban_id
+                        #         )
+                        #         if not mediainfo:
+                        #             logger.warn(f"豆瓣ID {douban_id} 未识别到媒体信息")
+                        #             continue
+                        # else:
                         # 匹配媒体信息
                         mediainfo = self.chain.recognize_media(meta=meta)
-                        if mediainfo:
-                            # 判断用户是否已经添加订阅，如果是则取消订阅
+                        if not mediainfo:
+                            logger.warn(
+                                f"未识别到媒体信息，标题：{title}，豆瓣ID：{douban_id}"
+                            )
+                            continue
+                        # 判断评分是否符合要求
+                        vote_average = None
+                        if mediainfo.vote_average:
                             try:
-                                subscribeoper = SubscribeOper()
-                                subscribehelper = SubscribeHelper()
-                                # 查找订阅
-                                subscribes = subscribeoper.list()
-                                for subscribe in subscribes:
-                                    if (
-                                        subscribe.tmdbid == mediainfo.tmdb_id
-                                        or subscribe.doubanid == mediainfo.douban_id
-                                    ):
-                                        if (
-                                            meta.begin_season is None
-                                            or subscribe.season == meta.begin_season
-                                        ):
-                                            logger.info(
-                                                f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
-                                            )
-                                            # 新增订阅历史
-                                            subscribeoper.add_history(
-                                                **subscribe.to_dict()
-                                            )
-                                            # 删除订阅
-                                            subscribeoper.delete(subscribe.id)
-                                            # 统计订阅
-                                            subscribehelper.sub_done_async(
-                                                {
-                                                    "tmdbid": subscribe.tmdbid,
-                                                    "doubanid": subscribe.doubanid,
-                                                }
-                                            )
-                                            break
-                            except Exception as e:
-                                logger.error(f"删除订阅时出错: {str(e)}")
-                        continue
-                    # 元数据
-                    meta = MetaInfo(title)
-                    meta.year = year
-                    if mtype:
-                        meta.type = mtype
-                    if meta.type not in (MediaType.MOVIE, MediaType.TV):
-                        meta.type = None
-                    # 识别媒体信息
-                    # if douban_id:
-                    #     # 识别豆瓣信息
-                    #     if settings.RECOGNIZE_SOURCE == "themoviedb":
-                    #         tmdbinfo = MediaChain().get_tmdbinfo_by_doubanid(
-                    #             doubanid=douban_id, mtype=meta.type
-                    #         )
-                    #         if not tmdbinfo:
-                    #             logger.warn(
-                    #                 f"未能通过豆瓣ID {douban_id} 获取到TMDB信息，标题：{title}，豆瓣ID：{douban_id}"
-                    #             )
-                    #             continue
-                    #         meta.type = tmdbinfo.get("media_type")
-                    #         mediainfo = self.chain.recognize_media(
-                    #             meta=meta, tmdbid=tmdbinfo.get("id")
-                    #         )
-                    #         if not mediainfo:
-                    #             logger.warn(
-                    #                 f'TMDBID {tmdbinfo.get("id")} 未识别到媒体信息'
-                    #             )
-                    #             continue
-                    #     else:
-                    #         mediainfo = self.chain.recognize_media(
-                    #             meta=meta, doubanid=douban_id
-                    #         )
-                    #         if not mediainfo:
-                    #             logger.warn(f"豆瓣ID {douban_id} 未识别到媒体信息")
-                    #             continue
-                    # else:
-                    # 匹配媒体信息
-                    mediainfo = self.chain.recognize_media(meta=meta)
-                    if not mediainfo:
-                        logger.warn(
-                            f"未识别到媒体信息，标题：{title}，豆瓣ID：{douban_id}"
+                                vote_average = float(mediainfo.vote_average)
+                            except (ValueError, TypeError):
+                                pass
+                        if self._vote and vote_average and vote_average < self._vote:
+                            logger.info(f"{mediainfo.title_year} 评分不符合要求")
+                            continue
+                        # 再次确认媒体信息中的年份
+                        mediainfo_year_int = None
+                        if mediainfo.year:
+                            try:
+                                mediainfo_year_int = int(mediainfo.year)
+                            except (ValueError, TypeError):
+                                pass
+                        if (
+                            self._min_year
+                            and mediainfo_year_int
+                            and mediainfo_year_int < self._min_year
+                        ):
+                            logger.info(f"{mediainfo.title_year} 年份不符合要求")
+                            continue
+                        # 查询缺失的媒体信息
+                        exist_flag, _ = DownloadChain().get_no_exists_info(
+                            meta=meta, mediainfo=mediainfo
                         )
+                        if exist_flag:
+                            logger.info(f"{mediainfo.title_year} 媒体库中已存在")
+                            continue
+                        # 判断用户是否已经添加订阅
+                        subscribechain = SubscribeChain()
+                        if subscribechain.exists(mediainfo=mediainfo, meta=meta):
+                            logger.info(f"{mediainfo.title_year} 订阅已存在")
+                            continue
+                        # 添加订阅
+                        subscribechain.add(
+                            title=mediainfo.title,
+                            year=mediainfo.year,
+                            mtype=mediainfo.type,
+                            tmdbid=mediainfo.tmdb_id,
+                            season=meta.begin_season,
+                            exist_ok=True,
+                            username="豆瓣榜单v2",
+                        )
+                        # 存储历史记录
+                        history.append(
+                            {
+                                "title": title,
+                                "type": mediainfo.type.value,
+                                "year": mediainfo.year,
+                                "poster": mediainfo.get_poster_image(),
+                                "overview": mediainfo.overview,
+                                "tmdbid": mediainfo.tmdb_id,
+                                "doubanid": douban_id,
+                                "time": datetime.datetime.now().strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                ),
+                                "unique": unique_flag,
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"处理榜单条目时出错: {str(e)}")
                         continue
-                    # 判断评分是否符合要求
-                    vote_average = None
-                    if mediainfo.vote_average:
-                        try:
-                            vote_average = float(mediainfo.vote_average)
-                        except (ValueError, TypeError):
-                            pass
-                    if self._vote and vote_average and vote_average < self._vote:
-                        logger.info(f"{mediainfo.title_year} 评分不符合要求")
-                        continue
-                    # 再次确认媒体信息中的年份
-                    mediainfo_year_int = None
-                    if mediainfo.year:
-                        try:
-                            mediainfo_year_int = int(mediainfo.year)
-                        except (ValueError, TypeError):
-                            pass
-                    if (
-                        self._min_year
-                        and mediainfo_year_int
-                        and mediainfo_year_int < self._min_year
-                    ):
-                        logger.info(f"{mediainfo.title_year} 年份不符合要求")
-                        continue
-                    # 查询缺失的媒体信息
-                    exist_flag, _ = DownloadChain().get_no_exists_info(
-                        meta=meta, mediainfo=mediainfo
-                    )
-                    if exist_flag:
-                        logger.info(f"{mediainfo.title_year} 媒体库中已存在")
-                        continue
-                    # 判断用户是否已经添加订阅
-                    subscribechain = SubscribeChain()
-                    if subscribechain.exists(mediainfo=mediainfo, meta=meta):
-                        logger.info(f"{mediainfo.title_year} 订阅已存在")
-                        continue
-                    # 添加订阅
-                    subscribechain.add(
-                        title=mediainfo.title,
-                        year=mediainfo.year,
-                        mtype=mediainfo.type,
-                        tmdbid=mediainfo.tmdb_id,
-                        season=meta.begin_season,
-                        exist_ok=True,
-                        username="豆瓣榜单v2",
-                    )
-                    # 存储历史记录
-                    history.append(
-                        {
-                            "title": title,
-                            "type": mediainfo.type.value,
-                            "year": mediainfo.year,
-                            "poster": mediainfo.get_poster_image(),
-                            "overview": mediainfo.overview,
-                            "tmdbid": mediainfo.tmdb_id,
-                            "doubanid": douban_id,
-                            "time": datetime.datetime.now().strftime(
-                                "%Y-%m-%d %H:%M:%S"
-                            ),
-                            "unique": unique_flag,
-                        }
-                    )
+                logger.info(f"榜单地址：{addr} 处理完成")
             except Exception as e:
                 logger.error(str(e))
 

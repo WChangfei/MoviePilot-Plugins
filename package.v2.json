@@ -3,7 +3,7 @@
     "name": "豆瓣榜单订阅V3",
     "description": "修复官方插件无法识别到媒体信息的问题",
     "labels": "示例",
-    "version": "1.0.7",
+    "version": "1.0.9",
     "icon": "douban.png",
     "author": "WChangFei",
     "level": 1
