@@ -46,10 +46,24 @@ class DoubanRankV2(_PluginBase):
     _event = Event()
     # 私有属性
     _scheduler = None
+    _douban_address = {
+        "mv-weekly": "/douban/movie/weekly",  # 口碑电影榜
+        "mv-real-time": "/douban/movie/weekly/movie_real_time_hotest",  # 实时热门电影
+        "mv-hot-gaia": "/douban/movie/weekly/movie_hot_gaia",  # 热播电影
+        "show": "/douban/movie/weekly/show_domestic",  # 热门综艺
+        "tv-hot": "/douban/movie/weekly/tv_hot",  # 近期热门
+        "tv-kr-hot": "/douban/list/14786",  # 热播韩剧
+        "tv-cn-hot": "/douban/list/EC74443FY",  # 近期热播国产剧
+        "tv-hk-top": "/douban/list/ECVM47WUA",  # 高分港剧
+        "tv-tw-top": "/douban/list/ECBI5EL6A",  # 高分台剧
+        "tv-cn-top": "/douban/list/ECT45KVZI",  # 高分国产剧
+        "tv-kr-top": "/douban/list/EC6EC5GBQ",  # 高分韩剧
+    }
     _enabled = False
     _cron = ""
     _onlyonce = False
     _rss_addrs = []
+    _ranks = []
     _vote = 0
     _clear = False
     _clearflag = False
@@ -73,6 +87,7 @@ class DoubanRankV2(_PluginBase):
                     self._rss_addrs = rss_addrs
             else:
                 self._rss_addrs = []
+            self._ranks = config.get("ranks") or []
             self._clear = config.get("clear")
 
         # 停止现有任务
@@ -267,6 +282,68 @@ class DoubanRankV2(_PluginBase):
                                 "component": "VCol",
                                 "content": [
                                     {
+                                        "component": "VSelect",
+                                        "props": {
+                                            "chips": True,
+                                            "multiple": True,
+                                            "model": "ranks",
+                                            "label": "热门榜单",
+                                            "items": [
+                                                {
+                                                    "title": "口碑电影榜",
+                                                    "value": "mv-weekly",
+                                                },
+                                                {
+                                                    "title": "实时热门电影",
+                                                    "value": "mv-real-time",
+                                                },
+                                                {
+                                                    "title": "热播电影",
+                                                    "value": "mv-hot-gaia",
+                                                },
+                                                {"title": "热门综艺", "value": "show"},
+                                                {
+                                                    "title": "近期热门",
+                                                    "value": "tv-hot",
+                                                },
+                                                {
+                                                    "title": "热播韩剧",
+                                                    "value": "tv-kr-hot",
+                                                },
+                                                {
+                                                    "title": "近期热播国产剧",
+                                                    "value": "tv-cn-hot",
+                                                },
+                                                {
+                                                    "title": "高分港剧",
+                                                    "value": "tv-hk-top",
+                                                },
+                                                {
+                                                    "title": "高分台剧",
+                                                    "value": "tv-tw-top",
+                                                },
+                                                {
+                                                    "title": "高分国产剧",
+                                                    "value": "tv-cn-top",
+                                                },
+                                                {
+                                                    "title": "高分韩剧",
+                                                    "value": "tv-kr-top",
+                                                },
+                                            ],
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "content": [
+                                    {
                                         "component": "VTextarea",
                                         "props": {
                                             "model": "rss_addrs",
@@ -305,6 +382,7 @@ class DoubanRankV2(_PluginBase):
             "onlyonce": False,
             "vote": "",
             "rsshub": "https://rsshub.app",
+            "ranks": [],
             "rss_addrs": "",
             "clear": False,
         }
@@ -465,6 +543,7 @@ class DoubanRankV2(_PluginBase):
                 "onlyonce": self._onlyonce,
                 "vote": self._vote,
                 "rsshub": self._rsshub,
+                "ranks": self._ranks,
                 "rss_addrs": "\n".join(map(str, self._rss_addrs)),
                 "clear": self._clear,
             }
@@ -475,7 +554,14 @@ class DoubanRankV2(_PluginBase):
         刷新RSS
         """
         logger.info(f"开始刷新豆瓣榜单 ...")
-        addr_list = self._rss_addrs
+        # 构建完整的RSS地址
+        rsshub_base = self._rsshub.rstrip("/")
+        rank_addrs = [
+            f"{rsshub_base}{self._douban_address.get(rank)}"
+            for rank in self._ranks
+            if self._douban_address.get(rank)
+        ]
+        addr_list = self._rss_addrs + rank_addrs
         if not addr_list:
             logger.info(f"未设置榜单RSS地址")
             return
