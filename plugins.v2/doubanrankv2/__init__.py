@@ -647,6 +647,13 @@ class DoubanRankV2(_PluginBase):
                     title = rss_info.get("title")
                     douban_id = rss_info.get("doubanid")
                     year = rss_info.get("year")
+                    # 尝试转换年份为整数
+                    year_int = None
+                    if year:
+                        try:
+                            year_int = int(year)
+                        except (ValueError, TypeError):
+                            pass
                     type_str = rss_info.get("type")
                     if type_str == "movie":
                         mtype = MediaType.MOVIE
@@ -669,7 +676,7 @@ class DoubanRankV2(_PluginBase):
                                 break
                     # 先检查RSS中的年份（如果有的话）
                     year_invalid = False
-                    if self._min_year and year and year < self._min_year:
+                    if self._min_year and year_int and year_int < self._min_year:
                         logger.info(f"{title} ({year}) 年份不符合要求")
                         year_invalid = True
                     # 如果命中黑名单或年份不符合要求，尝试识别媒体信息并取消订阅
