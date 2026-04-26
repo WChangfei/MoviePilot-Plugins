@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.context import MediaInfo
 from app.core.metainfo import MetaInfo
 from app.db.subscribe_oper import SubscribeOper
+from app.helper.subscribe import SubscribeHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import MediaType
@@ -31,7 +32,7 @@ class DoubanRankV3(_PluginBase):
     # 插件图标
     plugin_icon = "movie.jpg"
     # 插件版本
-    plugin_version = "1.0.6"
+    plugin_version = "1.0.7"
     # 插件作者
     plugin_author = "WChangFei"
     # 作者主页
@@ -695,6 +696,7 @@ class DoubanRankV3(_PluginBase):
                             # 判断用户是否已经添加订阅，如果是则取消订阅
                             try:
                                 subscribeoper = SubscribeOper()
+                                subscribehelper = SubscribeHelper()
                                 # 查找订阅
                                 subscribes = subscribeoper.list()
                                 for subscribe in subscribes:
@@ -709,7 +711,19 @@ class DoubanRankV3(_PluginBase):
                                             logger.info(
                                                 f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
                                             )
+                                            # 新增订阅历史
+                                            subscribeoper.add_history(
+                                                **subscribe.to_dict()
+                                            )
+                                            # 删除订阅
                                             subscribeoper.delete(subscribe.id)
+                                            # 统计订阅
+                                            subscribehelper.sub_done_async(
+                                                {
+                                                    "tmdbid": subscribe.tmdbid,
+                                                    "doubanid": subscribe.doubanid,
+                                                }
+                                            )
                                             break
                             except Exception as e:
                                 logger.error(f"删除订阅时出错: {str(e)}")
