@@ -31,7 +31,7 @@ class DoubanRankV3(_PluginBase):
     # 插件图标
     plugin_icon = "movie.jpg"
     # 插件版本
-    plugin_version = "1.0.5"
+    plugin_version = "1.0.6"
     # 插件作者
     plugin_author = "WChangFei"
     # 作者主页
@@ -696,16 +696,21 @@ class DoubanRankV3(_PluginBase):
                             try:
                                 subscribeoper = SubscribeOper()
                                 # 查找订阅
-                                subscribe = subscribeoper.get_by(
-                                    tmdbid=mediainfo.tmdb_id,
-                                    doubanid=mediainfo.douban_id,
-                                    season=meta.begin_season if meta else None,
-                                )
-                                if subscribe:
-                                    logger.info(
-                                        f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
-                                    )
-                                    subscribeoper.delete(subscribe.id)
+                                subscribes = subscribeoper.list()
+                                for subscribe in subscribes:
+                                    if (
+                                        subscribe.tmdbid == mediainfo.tmdb_id
+                                        or subscribe.doubanid == mediainfo.douban_id
+                                    ):
+                                        if (
+                                            meta.begin_season is None
+                                            or subscribe.season == meta.begin_season
+                                        ):
+                                            logger.info(
+                                                f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
+                                            )
+                                            subscribeoper.delete(subscribe.id)
+                                            break
                             except Exception as e:
                                 logger.error(f"删除订阅时出错: {str(e)}")
                         continue
