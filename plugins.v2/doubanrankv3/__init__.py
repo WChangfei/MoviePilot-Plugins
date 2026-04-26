@@ -15,6 +15,7 @@ from app.chain.subscribe import SubscribeChain
 from app.core.config import settings
 from app.core.context import MediaInfo
 from app.core.metainfo import MetaInfo
+from app.db.subscribe_oper import SubscribeOper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import MediaType
@@ -22,21 +23,21 @@ from app.utils.dom import DomUtils
 from app.utils.http import RequestUtils
 
 
-class DoubanRankV2(_PluginBase):
+class DoubanRankV3(_PluginBase):
     # 插件名称
-    plugin_name = "豆瓣榜单订阅V2"
+    plugin_name = "DoubanRankV3"
     # 插件描述
     plugin_desc = "监控豆瓣热门榜单，自动添加订阅。修复官方无法识别媒体信息的问题"
     # 插件图标
     plugin_icon = "movie.jpg"
     # 插件版本
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.5"
     # 插件作者
     plugin_author = "WChangFei"
     # 作者主页
     author_url = "https://github.com/WChangFei"
     # 插件配置项ID前缀
-    plugin_config_prefix = "doubanrankv2_"
+    plugin_config_prefix = "doubanrankv3_"
     # 加载顺序
     plugin_order = 6
     # 可使用的用户级别
@@ -178,7 +179,7 @@ class DoubanRankV2(_PluginBase):
         if self._enabled and self._cron:
             return [
                 {
-                    "id": "DoubanRankV2",
+                    "id": "DoubanRankV3",
                     "name": "豆瓣榜单订阅服务",
                     "trigger": CronTrigger.from_crontab(self._cron),
                     "func": self.__refresh_rss,
@@ -188,7 +189,7 @@ class DoubanRankV2(_PluginBase):
         elif self._enabled:
             return [
                 {
-                    "id": "DoubanRank",
+                    "id": "DoubanRankV3",
                     "name": "豆瓣榜单订阅服务",
                     "trigger": CronTrigger.from_crontab("0 8 * * *"),
                     "func": self.__refresh_rss,
@@ -476,10 +477,10 @@ class DoubanRankV2(_PluginBase):
                             },
                             "events": {
                                 "click": {
-                                    "api": "plugin/DoubanRankV2/delete_history",
+                                    "api": "plugin/DoubanRankV3/delete_history",
                                     "method": "get",
                                     "params": {
-                                        "key": f"doubanrank: {title} (DB:{doubanid})",
+                                        "key": f"doubanrankV3: {title} (DB:{doubanid})",
                                         "apikey": settings.API_TOKEN,
                                     },
                                 }
@@ -659,7 +660,7 @@ class DoubanRankV2(_PluginBase):
                         mtype = MediaType.MOVIE
                     elif type_str:
                         mtype = MediaType.TV
-                    unique_flag = f"doubanrank: {title} (DB:{douban_id})"
+                    unique_flag = f"doubanrankV3: {title} (DB:{douban_id})"
                     # 检查是否已处理过
                     if unique_flag in [h.get("unique") for h in history]:
                         continue
@@ -692,12 +693,21 @@ class DoubanRankV2(_PluginBase):
                         mediainfo = self.chain.recognize_media(meta=meta)
                         if mediainfo:
                             # 判断用户是否已经添加订阅，如果是则取消订阅
-                            subscribechain = SubscribeChain()
-                            if subscribechain.exists(mediainfo=mediainfo, meta=meta):
-                                logger.info(
-                                    f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
+                            try:
+                                subscribeoper = SubscribeOper()
+                                # 查找订阅
+                                subscribe = subscribeoper.get_by(
+                                    tmdbid=mediainfo.tmdb_id,
+                                    doubanid=mediainfo.douban_id,
+                                    season=meta.begin_season if meta else None,
                                 )
-                                subscribechain.delete(mediainfo=mediainfo, meta=meta)
+                                if subscribe:
+                                    logger.info(
+                                        f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
+                                    )
+                                    subscribeoper.delete(subscribe.id)
+                            except Exception as e:
+                                logger.error(f"删除订阅时出错: {str(e)}")
                         continue
                     # 元数据
                     meta = MetaInfo(title)
@@ -743,14 +753,26 @@ class DoubanRankV2(_PluginBase):
                         )
                         continue
                     # 判断评分是否符合要求
-                    if self._vote and mediainfo.vote_average < self._vote:
+                    vote_average = None
+                    if mediainfo.vote_average:
+                        try:
+                            vote_average = float(mediainfo.vote_average)
+                        except (ValueError, TypeError):
+                            pass
+                    if self._vote and vote_average and vote_average < self._vote:
                         logger.info(f"{mediainfo.title_year} 评分不符合要求")
                         continue
                     # 再次确认媒体信息中的年份
+                    mediainfo_year_int = None
+                    if mediainfo.year:
+                        try:
+                            mediainfo_year_int = int(mediainfo.year)
+                        except (ValueError, TypeError):
+                            pass
                     if (
                         self._min_year
-                        and mediainfo.year
-                        and mediainfo.year < self._min_year
+                        and mediainfo_year_int
+                        and mediainfo_year_int < self._min_year
                     ):
                         logger.info(f"{mediainfo.title_year} 年份不符合要求")
                         continue
