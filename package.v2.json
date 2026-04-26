@@ -1,6 +1,6 @@
 {
   "DoubanRankV2": {
-    "name": "豆瓣自定义订阅",
+    "name": "豆瓣榜单订阅V2",
     "description": "修复官方插件无法识别到媒体信息的问题",
     "labels": "示例",
     "version": "1.0.2",
