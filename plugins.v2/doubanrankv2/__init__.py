@@ -65,6 +65,8 @@ class DoubanRankV2(_PluginBase):
     _rss_addrs = []
     _ranks = []
     _vote = 0
+    _min_year = 0
+    _title_blacklist = []
     _clear = False
     _clearflag = False
     _proxy = False
@@ -78,6 +80,9 @@ class DoubanRankV2(_PluginBase):
             self._proxy = config.get("proxy")
             self._onlyonce = config.get("onlyonce")
             self._vote = float(config.get("vote")) if config.get("vote") else 0
+            self._min_year = (
+                int(config.get("min_year")) if config.get("min_year") else 0
+            )
             self._rsshub = config.get("rsshub") or "https://rsshub.app"
             rss_addrs = config.get("rss_addrs")
             if rss_addrs:
@@ -88,6 +93,19 @@ class DoubanRankV2(_PluginBase):
             else:
                 self._rss_addrs = []
             self._ranks = config.get("ranks") or []
+            # 加载标题黑名单
+            title_blacklist_str = config.get("title_blacklist")
+            if title_blacklist_str:
+                if isinstance(title_blacklist_str, str):
+                    self._title_blacklist = [
+                        keyword.strip()
+                        for keyword in title_blacklist_str.split(",")
+                        if keyword.strip()
+                    ]
+                else:
+                    self._title_blacklist = title_blacklist_str
+            else:
+                self._title_blacklist = []
             self._clear = config.get("clear")
 
         # 停止现有任务
@@ -266,6 +284,20 @@ class DoubanRankV2(_PluginBase):
                                     {
                                         "component": "VTextField",
                                         "props": {
+                                            "model": "min_year",
+                                            "label": "最小发布年份",
+                                            "placeholder": "0表示不限制",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
                                             "model": "rsshub",
                                             "label": "RSSHub地址",
                                             "placeholder": "https://rsshub.app",
@@ -360,6 +392,24 @@ class DoubanRankV2(_PluginBase):
                         "content": [
                             {
                                 "component": "VCol",
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "title_blacklist",
+                                            "label": "标题黑名单",
+                                            "placeholder": "多个关键字用逗号分隔，如：柯南,海贼王,火影",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
                                 "props": {"cols": 12, "md": 6},
                                 "content": [
                                     {
@@ -381,9 +431,11 @@ class DoubanRankV2(_PluginBase):
             "proxy": False,
             "onlyonce": False,
             "vote": "",
+            "min_year": "",
             "rsshub": "https://rsshub.app",
             "ranks": [],
             "rss_addrs": "",
+            "title_blacklist": "",
             "clear": False,
         }
 
@@ -542,6 +594,8 @@ class DoubanRankV2(_PluginBase):
                 "cron": self._cron,
                 "onlyonce": self._onlyonce,
                 "vote": self._vote,
+                "min_year": self._min_year,
+                "title_blacklist": ",".join(self._title_blacklist),
                 "rsshub": self._rsshub,
                 "ranks": self._ranks,
                 "rss_addrs": "\n".join(map(str, self._rss_addrs)),
@@ -602,6 +656,42 @@ class DoubanRankV2(_PluginBase):
                     # 检查是否已处理过
                     if unique_flag in [h.get("unique") for h in history]:
                         continue
+                    # 检查标题黑名单
+                    blacklisted = False
+                    if self._title_blacklist:
+                        title_lower = title.lower()
+                        for keyword in self._title_blacklist:
+                            if keyword.lower() in title_lower:
+                                logger.info(
+                                    f"{title} 标题包含黑名单关键字 '{keyword}'，跳过"
+                                )
+                                blacklisted = True
+                                break
+                    # 先检查RSS中的年份（如果有的话）
+                    year_invalid = False
+                    if self._min_year and year and year < self._min_year:
+                        logger.info(f"{title} ({year}) 年份不符合要求")
+                        year_invalid = True
+                    # 如果命中黑名单或年份不符合要求，尝试识别媒体信息并取消订阅
+                    if blacklisted or year_invalid:
+                        # 元数据
+                        meta = MetaInfo(title)
+                        meta.year = year
+                        if mtype:
+                            meta.type = mtype
+                        if meta.type not in (MediaType.MOVIE, MediaType.TV):
+                            meta.type = None
+                        # 匹配媒体信息
+                        mediainfo = self.chain.recognize_media(meta=meta)
+                        if mediainfo:
+                            # 判断用户是否已经添加订阅，如果是则取消订阅
+                            subscribechain = SubscribeChain()
+                            if subscribechain.exists(mediainfo=mediainfo, meta=meta):
+                                logger.info(
+                                    f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
+                                )
+                                subscribechain.delete(mediainfo=mediainfo, meta=meta)
+                        continue
                     # 元数据
                     meta = MetaInfo(title)
                     meta.year = year
@@ -648,6 +738,14 @@ class DoubanRankV2(_PluginBase):
                     # 判断评分是否符合要求
                     if self._vote and mediainfo.vote_average < self._vote:
                         logger.info(f"{mediainfo.title_year} 评分不符合要求")
+                        continue
+                    # 再次确认媒体信息中的年份
+                    if (
+                        self._min_year
+                        and mediainfo.year
+                        and mediainfo.year < self._min_year
+                    ):
+                        logger.info(f"{mediainfo.title_year} 年份不符合要求")
                         continue
                     # 查询缺失的媒体信息
                     exist_flag, _ = DownloadChain().get_no_exists_info(
