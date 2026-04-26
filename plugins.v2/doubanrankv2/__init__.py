@@ -70,7 +70,7 @@ class DoubanRankV2(_PluginBase):
     _clear = False
     _clearflag = False
     _proxy = False
-    _rsshub = "https://rsshub.app"
+    _rsshub = "http://127.0.0.1:1200"
 
     def init_plugin(self, config: dict = None):
 
@@ -83,7 +83,7 @@ class DoubanRankV2(_PluginBase):
             self._min_year = (
                 int(config.get("min_year")) if config.get("min_year") else 0
             )
-            self._rsshub = config.get("rsshub") or "https://rsshub.app"
+            self._rsshub = config.get("rsshub") or "http://127.0.0.1:1200"
             rss_addrs = config.get("rss_addrs")
             if rss_addrs:
                 if isinstance(rss_addrs, str):
@@ -300,7 +300,7 @@ class DoubanRankV2(_PluginBase):
                                         "props": {
                                             "model": "rsshub",
                                             "label": "RSSHub地址",
-                                            "placeholder": "https://rsshub.app",
+                                            "placeholder": "http://127.0.0.1:1200",
                                         },
                                     }
                                 ],
@@ -380,7 +380,7 @@ class DoubanRankV2(_PluginBase):
                                         "props": {
                                             "model": "rss_addrs",
                                             "label": "自定义榜单地址",
-                                            "placeholder": "每行一个地址，如：https://rsshub.app/douban/movie/ustop",
+                                            "placeholder": "每行一个地址，如：http://127.0.0.1:1200/douban/movie/ustop",
                                         },
                                     }
                                 ],
@@ -432,7 +432,7 @@ class DoubanRankV2(_PluginBase):
             "onlyonce": False,
             "vote": "",
             "min_year": "",
-            "rsshub": "https://rsshub.app",
+            "rsshub": "http://127.0.0.1:1200",
             "ranks": [],
             "rss_addrs": "",
             "title_blacklist": "",
