@@ -1,11 +1,11 @@
 {
   "DoubanRankV2": {
-    "name": "我的插件",
-    "description": "一个最小可运行的 V2 插件示例。",
+    "name": "豆瓣自定义订阅",
+    "description": "修复官方插件无法识别到媒体信息的问题",
     "labels": "示例",
     "version": "1.0.0",
-    "icon": "Moviepilot_A.png",
-    "author": "your-name",
+    "icon": "douban.png",
+    "author": "WChangFei",
     "level": 1
   }
 }
