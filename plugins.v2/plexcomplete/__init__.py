@@ -1,6 +1,6 @@
 import datetime
 from threading import Event
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,16 +13,17 @@ from app.core.config import settings
 from app.core.context import MediaInfo
 from app.core.metainfo import MetaInfo
 from app.db.mediaserver_oper import MediaServerOper
+from app.helper.mediaserver import MediaServerHelper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.schemas import MediaType
+from app.schemas import MediaType, ServiceInfo
 
 
 class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.1.1"
+    plugin_version = "1.1.2"
     plugin_author = "PlexComplete"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -35,6 +36,7 @@ class PlexComplete(_PluginBase):
     _cron = ""
     _onlyonce = False
     _libraries: List[str] = []
+    mediaserver_helper: MediaServerHelper = None
 
     mediachain: MediaChain = None
     subscribechain: SubscribeChain = None
@@ -46,6 +48,7 @@ class PlexComplete(_PluginBase):
         self.subscribechain = SubscribeChain()
         self.downloadchain = DownloadChain()
         self.mediaserveroper = MediaServerOper()
+        self.mediaserver_helper = MediaServerHelper()
 
         if config:
             self._enabled = config.get("enabled", False)
@@ -202,29 +205,63 @@ class PlexComplete(_PluginBase):
             "libraries": [],
         }
 
+    def service_infos(
+        self, name_filters: Optional[List[str]] = None
+    ) -> Optional[Dict[str, ServiceInfo]]:
+        """
+        服务信息
+        """
+        services = self.mediaserver_helper.get_services(
+            name_filters=name_filters, type_filter="plex"
+        )
+        if not services:
+            logger.warning("获取媒体服务器实例失败，请检查配置")
+            return None
+
+        active_services = {}
+        for service_name, service_info in services.items():
+            if (
+                hasattr(service_info.instance, "is_inactive")
+                and service_info.instance.is_inactive()
+            ):
+                logger.warning(f"媒体服务器 {service_name} 未连接，请检查配置")
+            else:
+                active_services[service_name] = service_info
+
+        if not active_services:
+            logger.warning("没有已连接的媒体服务器，请检查配置")
+            return None
+
+        return active_services
+
     def __get_library_options(self) -> List[Dict[str, Any]]:
         """获取媒体库选项列表"""
-        try:
-            from app.db import ScopedSession
-            from app.db.models.mediaserver import MediaServerItem
+        library_options = []
+        service_infos = self.service_infos()
+        if not service_infos:
+            return library_options
 
-            db = ScopedSession()
+        # 获取所有媒体库
+        for service in service_infos.values():
+            plex = service.instance
+            if not plex or not hasattr(plex, "get_plex") or not plex.get_plex():
+                continue
+            plex_server = plex.get_plex()
             try:
-                libraries = db.query(MediaServerItem.library).distinct().all()
-                if not libraries:
-                    return []
-                options = []
-                seen = set()
-                for lib in libraries:
-                    if lib[0] and lib[0] not in seen:
-                        seen.add(lib[0])
-                        options.append({"title": str(lib[0]), "value": str(lib[0])})
-                return options
-            finally:
-                db.close()
-        except Exception as e:
-            logger.error(f"获取媒体库选项失败：{str(e)}")
-            return []
+                libraries = sorted(plex_server.library.sections(), key=lambda x: x.key)
+                # 遍历媒体库，创建字典并添加到列表中
+                for library in libraries:
+                    # 仅支持剧集媒体库
+                    if library.TYPE != "show":
+                        continue
+                    library_dict = {
+                        "title": f"{service.name} - {library.key}. {library.title} ({library.TYPE})",
+                        "value": f"{service.name}.{library.key}",
+                    }
+                    library_options.append(library_dict)
+            except Exception as e:
+                logger.error(f"获取Plex媒体库失败：{str(e)}")
+        return library_options
 
     def get_page(self) -> List[dict]:
         return []
@@ -266,8 +303,21 @@ class PlexComplete(_PluginBase):
 
                 # 应用媒体库筛选
                 if self._libraries:
-                    query = query.filter(MediaServerItem.library.in_(self._libraries))
-                    logger.info(f"筛选媒体库：{self._libraries}")
+                    # 提取媒体库ID列表
+                    library_ids = []
+                    for lib in self._libraries:
+                        try:
+                            # 格式：服务名.媒体库ID
+                            if "." in lib:
+                                library_id = lib.split(".")[-1]
+                                library_ids.append(library_id)
+                            else:
+                                library_ids.append(lib)
+                        except Exception:
+                            pass
+                    if library_ids:
+                        query = query.filter(MediaServerItem.library.in_(library_ids))
+                        logger.info(f"筛选媒体库ID：{library_ids}")
 
                 items = query.all()
 
