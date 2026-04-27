@@ -15,8 +15,6 @@ from app.chain.subscribe import SubscribeChain
 from app.core.config import settings
 from app.core.context import MediaInfo
 from app.core.metainfo import MetaInfo
-from app.db.subscribe_oper import SubscribeOper
-from app.helper.subscribe import SubscribeHelper
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import MediaType
@@ -32,7 +30,7 @@ class DoubanRankV3(_PluginBase):
     # 插件图标
     plugin_icon = "movie.jpg"
     # 插件版本
-    plugin_version = "1.0.9"
+    plugin_version = "1.1.0"
     # 插件作者
     plugin_author = "WChangFei"
     # 作者主页
@@ -683,52 +681,8 @@ class DoubanRankV3(_PluginBase):
                         if self._min_year and year_int and year_int < self._min_year:
                             logger.info(f"{title} ({year}) 年份不符合要求")
                             year_invalid = True
-                        # 如果命中黑名单或年份不符合要求，尝试识别媒体信息并取消订阅
+                        # 如果命中黑名单或年份不符合要求，跳过
                         if blacklisted or year_invalid:
-                            # 元数据
-                            meta = MetaInfo(title)
-                            meta.year = year
-                            if mtype:
-                                meta.type = mtype
-                            if meta.type not in (MediaType.MOVIE, MediaType.TV):
-                                meta.type = None
-                            # 匹配媒体信息
-                            mediainfo = self.chain.recognize_media(meta=meta)
-                            if mediainfo:
-                                # 判断用户是否已经添加订阅，如果是则取消订阅
-                                try:
-                                    subscribeoper = SubscribeOper()
-                                    subscribehelper = SubscribeHelper()
-                                    # 查找订阅
-                                    subscribes = subscribeoper.list()
-                                    for subscribe in subscribes:
-                                        if (
-                                            subscribe.tmdbid == mediainfo.tmdb_id
-                                            or subscribe.doubanid == mediainfo.douban_id
-                                        ):
-                                            if (
-                                                meta.begin_season is None
-                                                or subscribe.season == meta.begin_season
-                                            ):
-                                                logger.info(
-                                                    f"{mediainfo.title_year} 命中黑名单/年份不符合要求，取消订阅"
-                                                )
-                                                # 新增订阅历史
-                                                subscribeoper.add_history(
-                                                    **subscribe.to_dict()
-                                                )
-                                                # 删除订阅
-                                                subscribeoper.delete(subscribe.id)
-                                                # 统计订阅
-                                                subscribehelper.sub_done_async(
-                                                    {
-                                                        "tmdbid": subscribe.tmdbid,
-                                                        "doubanid": subscribe.doubanid,
-                                                    }
-                                                )
-                                                break
-                                except Exception as e:
-                                    logger.error(f"删除订阅时出错: {str(e)}")
                             continue
                         # 元数据
                         meta = MetaInfo(title)
