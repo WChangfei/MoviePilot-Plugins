@@ -23,7 +23,7 @@ class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.1.2"
+    plugin_version = "1.1.3"
     plugin_author = "PlexComplete"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -325,19 +325,40 @@ class PlexComplete(_PluginBase):
                     logger.info("未找到媒体库中的电视剧")
                     return
 
-                logger.info(f"找到 {len(items)} 部电视剧")
-
+                # 按媒体库分组
+                library_items = {}
                 for item in items:
-                    if self._event.is_set():
-                        logger.info("服务停止，退出检查")
-                        break
+                    library = item.library or "未知"
+                    if library not in library_items:
+                        library_items[library] = []
+                    library_items[library].append(item)
 
-                    try:
-                        self.__process_item(item)
-                    except Exception as e:
-                        logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
+                # 处理每个媒体库
+                for library, lib_items in library_items.items():
+                    logger.info(f"处理媒体库 {library}，共 {len(lib_items)} 部电视剧")
+                    processed_count = 0
 
-                logger.info("媒体库剧集检查完成")
+                    for item in lib_items:
+                        if self._event.is_set():
+                            logger.error(
+                                f"服务停止，媒体库 {library} 未完成处理，已处理 {processed_count} 部，剩余 {len(lib_items) - processed_count} 部"
+                            )
+                            break
+
+                        try:
+                            self.__process_item(item)
+                            processed_count += 1
+                        except Exception as e:
+                            logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
+                            logger.error(
+                                f"媒体库 {library} 处理中断，已处理 {processed_count} 部，当前失败剧集：{item.title}"
+                            )
+
+                    logger.info(
+                        f"媒体库 {library} 处理完成，共处理 {processed_count} 部电视剧"
+                    )
+
+                logger.info("所有媒体库剧集检查完成")
             finally:
                 db.close()
 
