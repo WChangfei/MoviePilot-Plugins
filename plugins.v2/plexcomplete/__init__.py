@@ -1,0 +1,324 @@
+import datetime
+from threading import Event
+from typing import Tuple, List, Dict, Any
+
+import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+from app.chain.download import DownloadChain
+from app.chain.media import MediaChain
+from app.chain.subscribe import SubscribeChain
+from app.core.config import settings
+from app.core.context import MediaInfo
+from app.core.metainfo import MetaInfo
+from app.db.mediaserver_oper import MediaServerOper
+from app.log import logger
+from app.plugins import _PluginBase
+from app.schemas import MediaType
+
+
+class PlexComplete(_PluginBase):
+    plugin_name = "Plex剧集补全"
+    plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
+    plugin_icon = "movie.jpg"
+    plugin_version = "1.0.0"
+    plugin_author = "PlexComplete"
+    author_url = ""
+    plugin_config_prefix = "plexcomplete_"
+    plugin_order = 7
+    auth_level = 1
+
+    _event = Event()
+    _scheduler = None
+    _enabled = False
+    _cron = ""
+    _onlyonce = False
+
+    mediachain: MediaChain = None
+    subscribechain: SubscribeChain = None
+    downloadchain: DownloadChain = None
+    mediaserveroper: MediaServerOper = None
+
+    def init_plugin(self, config: dict = None):
+        self.mediachain = MediaChain()
+        self.subscribechain = SubscribeChain()
+        self.downloadchain = DownloadChain()
+        self.mediaserveroper = MediaServerOper()
+
+        if config:
+            self._enabled = config.get("enabled", False)
+            self._cron = config.get("cron")
+            self._onlyonce = config.get("onlyonce", False)
+
+        self.stop_service()
+
+        if self._enabled or self._onlyonce:
+            self._scheduler = BackgroundScheduler(timezone=settings.TZ)
+
+            if self._onlyonce:
+                logger.info("Plex剧集补全服务启动，立即运行一次")
+                self._scheduler.add_job(
+                    func=self.__check_library,
+                    trigger="date",
+                    run_date=datetime.datetime.now(tz=pytz.timezone(settings.TZ))
+                    + datetime.timedelta(seconds=3),
+                )
+
+            if self._enabled and self._cron:
+                try:
+                    self._scheduler.add_job(
+                        func=self.__check_library,
+                        trigger=CronTrigger.from_crontab(self._cron),
+                        name="Plex剧集补全",
+                    )
+                except Exception as err:
+                    logger.error(f"Plex剧集补全服务启动失败：{err}")
+                    self.systemmessage.put(f"Plex剧集补全服务启动失败：{err}")
+
+            if self._onlyonce:
+                self._onlyonce = False
+                self.__update_config()
+
+            if self._scheduler.get_jobs():
+                self._scheduler.print_jobs()
+                self._scheduler.start()
+
+    def get_state(self) -> bool:
+        return self._enabled
+
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        pass
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        return []
+
+    def get_service(self) -> List[Dict[str, Any]]:
+        if self._enabled and self._cron:
+            return [
+                {
+                    "id": "PlexComplete",
+                    "name": "Plex剧集补全服务",
+                    "trigger": CronTrigger.from_crontab(self._cron),
+                    "func": self.__check_library,
+                    "kwargs": {},
+                }
+            ]
+        elif self._enabled:
+            return [
+                {
+                    "id": "PlexComplete",
+                    "name": "Plex剧集补全服务",
+                    "trigger": CronTrigger.from_crontab("0 9 * * *"),
+                    "func": self.__check_library,
+                    "kwargs": {},
+                }
+            ]
+        return []
+
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        return [
+            {
+                "component": "VForm",
+                "content": [
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
+                                            "model": "enabled",
+                                            "label": "启用插件",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VSwitch",
+                                        "props": {
+                                            "model": "onlyonce",
+                                            "label": "立即运行一次",
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 4},
+                                "content": [
+                                    {
+                                        "component": "VCronField",
+                                        "props": {
+                                            "model": "cron",
+                                            "label": "执行周期",
+                                            "placeholder": "5位cron表达式",
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            }
+        ], {
+            "enabled": False,
+            "cron": "",
+            "onlyonce": False,
+        }
+
+    def get_page(self) -> List[dict]:
+        return []
+
+    def stop_service(self):
+        try:
+            if self._scheduler:
+                self._scheduler.remove_all_jobs()
+                if self._scheduler.running:
+                    self._event.set()
+                    self._scheduler.shutdown()
+                    self._event.clear()
+                self._scheduler = None
+        except Exception as e:
+            logger.error(str(e))
+
+    def __update_config(self):
+        self.update_config(
+            {
+                "enabled": self._enabled,
+                "cron": self._cron,
+                "onlyonce": self._onlyonce,
+            }
+        )
+
+    def __check_library(self):
+        logger.info("开始检查媒体库剧集...")
+
+        try:
+            from app.db import SessionLocal
+
+            db = SessionLocal()
+            mediaserveroper = MediaServerOper(db)
+
+            from app.db.models.mediaserver import MediaServerItem
+
+            items = (
+                db.query(MediaServerItem)
+                .filter(MediaServerItem.item_type == "电视剧")
+                .all()
+            )
+
+            if not items:
+                logger.info("未找到媒体库中的电视剧")
+                return
+
+            logger.info(f"找到 {len(items)} 部电视剧")
+
+            for item in items:
+                if self._event.is_set():
+                    logger.info("服务停止，退出检查")
+                    break
+
+                try:
+                    self.__process_item(item)
+                except Exception as e:
+                    logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
+
+            logger.info("媒体库剧集检查完成")
+
+        except Exception as e:
+            logger.error(f"检查媒体库时出错：{str(e)}")
+
+    def __process_item(self, item):
+        title = item.title
+        year = item.year
+        tmdbid = item.tmdbid
+        item_id = item.item_id
+
+        logger.info(f"处理电视剧：{title} ({year})")
+
+        meta = MetaInfo(title)
+        if year:
+            meta.year = year
+        meta.type = MediaType.TV
+
+        mediainfo = None
+        if tmdbid:
+            mediainfo = self.mediachain.recognize_media(meta=meta, tmdbid=tmdbid)
+        else:
+            mediainfo = self.mediachain.recognize_media(meta=meta)
+
+        if not mediainfo:
+            logger.warning(f"未识别到电视剧媒体信息：{title}")
+            return
+
+        if not mediainfo.seasons:
+            logger.warning(f"未获取到电视剧季集信息：{title}")
+            return
+
+        plex_seasoninfo = item.seasoninfo or {}
+
+        for season_num, tmdb_episodes in mediainfo.seasons.items():
+            total_episodes = len(tmdb_episodes)
+            if total_episodes == 0:
+                continue
+
+            logger.info(f"检查 {title} 第{season_num}季，TMDB共{total_episodes}集")
+
+            plex_episodes = plex_seasoninfo.get(str(season_num)) or []
+            plex_episode_count = len(plex_episodes)
+            logger.info(f"{title} 第{season_num}季，媒体库现有{plex_episode_count}集")
+
+            if plex_episode_count >= total_episodes:
+                logger.info(f"{title} 第{season_num}季已完整，跳过")
+                continue
+
+            logger.info(f"{title} 第{season_num}季有缺失集数")
+
+            meta_season = MetaInfo(title)
+            if year:
+                meta_season.year = year
+            meta_season.type = MediaType.TV
+            meta_season.begin_season = season_num
+
+            exist_flag, no_exists = self.downloadchain.get_no_exists_info(
+                meta=meta_season, mediainfo=mediainfo
+            )
+
+            if exist_flag:
+                logger.info(f"{title} 第{season_num}季媒体库实际已完整，跳过")
+                continue
+
+            if self.subscribechain.exists(mediainfo=mediainfo, meta=meta_season):
+                logger.info(f"{title} 第{season_num}季已存在订阅")
+                continue
+
+            logger.info(f"为 {title} 第{season_num}季添加订阅")
+            sid, err_msg = self.subscribechain.add(
+                title=mediainfo.title,
+                year=mediainfo.year,
+                mtype=MediaType.TV,
+                tmdbid=mediainfo.tmdb_id,
+                doubanid=mediainfo.douban_id,
+                season=season_num,
+                exist_ok=True,
+                username="PlexComplete",
+            )
+
+            if sid:
+                logger.info(f"{title} 第{season_num}季订阅添加成功")
+            else:
+                logger.error(f"{title} 第{season_num}季订阅添加失败：{err_msg}")
