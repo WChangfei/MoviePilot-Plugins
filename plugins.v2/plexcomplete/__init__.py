@@ -24,7 +24,7 @@ class PlexComplete(_PluginBase):
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
     plugin_version = "1.1.3"
-    plugin_author = "PlexComplete"
+    plugin_author = "WChangfei"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
     plugin_order = 7
