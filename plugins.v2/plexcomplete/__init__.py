@@ -23,7 +23,7 @@ class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.1.6"
+    plugin_version = "1.1.7"
     plugin_author = "WChangfei"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -36,6 +36,7 @@ class PlexComplete(_PluginBase):
     _cron = ""
     _onlyonce = False
     _libraries: List[str] = []
+    _title_blacklist: List[str] = []
     mediaserver_helper: MediaServerHelper = None
 
     mediachain: MediaChain = None
@@ -55,6 +56,19 @@ class PlexComplete(_PluginBase):
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
             self._libraries = config.get("libraries") or []
+            # 加载标题黑名单
+            title_blacklist_str = config.get("title_blacklist")
+            if title_blacklist_str:
+                if isinstance(title_blacklist_str, str):
+                    self._title_blacklist = [
+                        keyword.strip()
+                        for keyword in title_blacklist_str.split(",")
+                        if keyword.strip()
+                    ]
+                else:
+                    self._title_blacklist = title_blacklist_str
+            else:
+                self._title_blacklist = []
 
         self.stop_service()
 
@@ -196,6 +210,25 @@ class PlexComplete(_PluginBase):
                             },
                         ],
                     },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "title_blacklist",
+                                            "label": "标题黑名单",
+                                            "placeholder": "多个关键字用逗号分隔，如：柯南,海贼王,火影",
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                    },
                 ],
             }
         ], {
@@ -203,6 +236,7 @@ class PlexComplete(_PluginBase):
             "cron": "",
             "onlyonce": False,
             "libraries": [],
+            "title_blacklist": "",
         }
 
     def service_infos(
@@ -285,6 +319,7 @@ class PlexComplete(_PluginBase):
                 "cron": self._cron,
                 "onlyonce": self._onlyonce,
                 "libraries": self._libraries,
+                "title_blacklist": ",".join(self._title_blacklist),
             }
         )
 
@@ -406,6 +441,14 @@ class PlexComplete(_PluginBase):
         year = item.year
         tmdbid = item.tmdbid
         item_id = item.item_id
+
+        # 检查标题黑名单
+        if self._title_blacklist:
+            title_lower = title.lower()
+            for keyword in self._title_blacklist:
+                if keyword.lower() in title_lower:
+                    logger.info(f"{title} 标题包含黑名单关键字 '{keyword}'，跳过")
+                    return
 
         logger.info(f"处理电视剧：{title} ({year})")
 
