@@ -10,9 +10,9 @@
   },
   "PlexComplete": {
     "name": "Plex剧集补全",
-    "description": "检查Plex媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集",
+    "description": "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集",
     "labels": "示例",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "icon": "movie.jpg",
     "author": "PlexComplete",
     "level": 1

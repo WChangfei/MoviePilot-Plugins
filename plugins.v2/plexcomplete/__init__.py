@@ -22,7 +22,7 @@ class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.0.0"
+    plugin_version = "1.0.1"
     plugin_author = "PlexComplete"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -208,36 +208,36 @@ class PlexComplete(_PluginBase):
         logger.info("开始检查媒体库剧集...")
 
         try:
-            from app.db import SessionLocal
-
-            db = SessionLocal()
-            mediaserveroper = MediaServerOper(db)
-
+            from app.db import ScopedSession
             from app.db.models.mediaserver import MediaServerItem
 
-            items = (
-                db.query(MediaServerItem)
-                .filter(MediaServerItem.item_type == "电视剧")
-                .all()
-            )
+            db = ScopedSession()
+            try:
+                items = (
+                    db.query(MediaServerItem)
+                    .filter(MediaServerItem.item_type == "电视剧")
+                    .all()
+                )
 
-            if not items:
-                logger.info("未找到媒体库中的电视剧")
-                return
+                if not items:
+                    logger.info("未找到媒体库中的电视剧")
+                    return
 
-            logger.info(f"找到 {len(items)} 部电视剧")
+                logger.info(f"找到 {len(items)} 部电视剧")
 
-            for item in items:
-                if self._event.is_set():
-                    logger.info("服务停止，退出检查")
-                    break
+                for item in items:
+                    if self._event.is_set():
+                        logger.info("服务停止，退出检查")
+                        break
 
-                try:
-                    self.__process_item(item)
-                except Exception as e:
-                    logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
+                    try:
+                        self.__process_item(item)
+                    except Exception as e:
+                        logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
 
-            logger.info("媒体库剧集检查完成")
+                logger.info("媒体库剧集检查完成")
+            finally:
+                db.close()
 
         except Exception as e:
             logger.error(f"检查媒体库时出错：{str(e)}")
