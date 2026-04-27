@@ -22,7 +22,7 @@ class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.0.1"
+    plugin_version = "1.1.1"
     plugin_author = "PlexComplete"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -34,6 +34,7 @@ class PlexComplete(_PluginBase):
     _enabled = False
     _cron = ""
     _onlyonce = False
+    _libraries: List[str] = []
 
     mediachain: MediaChain = None
     subscribechain: SubscribeChain = None
@@ -50,6 +51,7 @@ class PlexComplete(_PluginBase):
             self._enabled = config.get("enabled", False)
             self._cron = config.get("cron")
             self._onlyonce = config.get("onlyonce", False)
+            self._libraries = config.get("libraries") or []
 
         self.stop_service()
 
@@ -118,6 +120,7 @@ class PlexComplete(_PluginBase):
         return []
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        library_options = self.__get_library_options()
         return [
             {
                 "component": "VForm",
@@ -170,6 +173,24 @@ class PlexComplete(_PluginBase):
                                     }
                                 ],
                             },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 8},
+                                "content": [
+                                    {
+                                        "component": "VSelect",
+                                        "props": {
+                                            "model": "libraries",
+                                            "label": "媒体库选择",
+                                            "items": library_options,
+                                            "multiple": True,
+                                            "chips": True,
+                                            "clearable": True,
+                                            "placeholder": "选择要检查的媒体库，不选择则检查所有",
+                                        },
+                                    }
+                                ],
+                            },
                         ],
                     },
                 ],
@@ -178,7 +199,32 @@ class PlexComplete(_PluginBase):
             "enabled": False,
             "cron": "",
             "onlyonce": False,
+            "libraries": [],
         }
+
+    def __get_library_options(self) -> List[Dict[str, Any]]:
+        """获取媒体库选项列表"""
+        try:
+            from app.db import ScopedSession
+            from app.db.models.mediaserver import MediaServerItem
+
+            db = ScopedSession()
+            try:
+                libraries = db.query(MediaServerItem.library).distinct().all()
+                if not libraries:
+                    return []
+                options = []
+                seen = set()
+                for lib in libraries:
+                    if lib[0] and lib[0] not in seen:
+                        seen.add(lib[0])
+                        options.append({"title": str(lib[0]), "value": str(lib[0])})
+                return options
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"获取媒体库选项失败：{str(e)}")
+            return []
 
     def get_page(self) -> List[dict]:
         return []
@@ -201,6 +247,7 @@ class PlexComplete(_PluginBase):
                 "enabled": self._enabled,
                 "cron": self._cron,
                 "onlyonce": self._onlyonce,
+                "libraries": self._libraries,
             }
         )
 
@@ -213,11 +260,16 @@ class PlexComplete(_PluginBase):
 
             db = ScopedSession()
             try:
-                items = (
-                    db.query(MediaServerItem)
-                    .filter(MediaServerItem.item_type == "电视剧")
-                    .all()
+                query = db.query(MediaServerItem).filter(
+                    MediaServerItem.item_type == "电视剧"
                 )
+
+                # 应用媒体库筛选
+                if self._libraries:
+                    query = query.filter(MediaServerItem.library.in_(self._libraries))
+                    logger.info(f"筛选媒体库：{self._libraries}")
+
+                items = query.all()
 
                 if not items:
                     logger.info("未找到媒体库中的电视剧")
@@ -271,14 +323,26 @@ class PlexComplete(_PluginBase):
 
         plex_seasoninfo = item.seasoninfo or {}
 
-        for season_num, tmdb_episodes in mediainfo.seasons.items():
+        # 只处理媒体库中已存在的季
+        for season_str in plex_seasoninfo.keys():
+            try:
+                season_num = int(season_str)
+            except (ValueError, TypeError):
+                continue
+
+            # 检查TMDB中是否有这个季的信息
+            tmdb_episodes = mediainfo.seasons.get(season_num)
+            if not tmdb_episodes:
+                logger.info(f"{title} 第{season_num}季在TMDB中未找到信息，跳过")
+                continue
+
             total_episodes = len(tmdb_episodes)
             if total_episodes == 0:
                 continue
 
             logger.info(f"检查 {title} 第{season_num}季，TMDB共{total_episodes}集")
 
-            plex_episodes = plex_seasoninfo.get(str(season_num)) or []
+            plex_episodes = plex_seasoninfo.get(season_str) or []
             plex_episode_count = len(plex_episodes)
             logger.info(f"{title} 第{season_num}季，媒体库现有{plex_episode_count}集")
 
