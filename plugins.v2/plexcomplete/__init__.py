@@ -23,7 +23,7 @@ class PlexComplete(_PluginBase):
     plugin_name = "Plex剧集补全"
     plugin_desc = "检查媒体库中的电视剧，对比TMDB集数，自动添加订阅补全缺失剧集"
     plugin_icon = "movie.jpg"
-    plugin_version = "1.1.3"
+    plugin_version = "1.1.6"
     plugin_author = "WChangfei"
     author_url = ""
     plugin_config_prefix = "plexcomplete_"
@@ -288,6 +288,29 @@ class PlexComplete(_PluginBase):
             }
         )
 
+    def __get_library_name(self, library_id: str) -> str:
+        """根据媒体库ID获取媒体库名称"""
+        try:
+            service_infos = self.service_infos()
+            if not service_infos:
+                return library_id
+
+            for service in service_infos.values():
+                plex = service.instance
+                if not plex or not hasattr(plex, "get_plex") or not plex.get_plex():
+                    continue
+                plex_server = plex.get_plex()
+                try:
+                    libraries = plex_server.library.sections()
+                    for library in libraries:
+                        if str(library.key) == library_id:
+                            return f"{service.name} - {library.title}"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return library_id
+
     def __check_library(self):
         logger.info("开始检查媒体库剧集...")
 
@@ -333,30 +356,43 @@ class PlexComplete(_PluginBase):
                         library_items[library] = []
                     library_items[library].append(item)
 
+                logger.info(
+                    f"共发现 {len(library_items)} 个媒体库，分别是：{list(library_items.keys())}"
+                )
+
                 # 处理每个媒体库
-                for library, lib_items in library_items.items():
-                    logger.info(f"处理媒体库 {library}，共 {len(lib_items)} 部电视剧")
-                    processed_count = 0
+                for library_id, lib_items in library_items.items():
+                    try:
+                        library_name = self.__get_library_name(library_id)
+                        logger.info(
+                            f"开始处理媒体库 {library_name}，共 {len(lib_items)} 部电视剧"
+                        )
+                        processed_count = 0
 
-                    for item in lib_items:
-                        if self._event.is_set():
-                            logger.error(
-                                f"服务停止，媒体库 {library} 未完成处理，已处理 {processed_count} 部，剩余 {len(lib_items) - processed_count} 部"
-                            )
-                            break
+                        for item in lib_items:
+                            if self._event.is_set():
+                                logger.error(
+                                    f"服务停止，媒体库 {library_name} 未完成处理，已处理 {processed_count} 部，剩余 {len(lib_items) - processed_count} 部"
+                                )
+                                break
 
-                        try:
-                            self.__process_item(item)
-                            processed_count += 1
-                        except Exception as e:
-                            logger.error(f"处理电视剧 {item.title} 时出错：{str(e)}")
-                            logger.error(
-                                f"媒体库 {library} 处理中断，已处理 {processed_count} 部，当前失败剧集：{item.title}"
-                            )
+                            try:
+                                self.__process_item(item)
+                                processed_count += 1
+                            except Exception as e:
+                                logger.error(
+                                    f"处理电视剧 {item.title} 时出错：{str(e)}"
+                                )
+                                logger.warning(
+                                    f"媒体库 {library_name} 继续处理，已处理 {processed_count} 部，当前失败剧集：{item.title}"
+                                )
 
-                    logger.info(
-                        f"媒体库 {library} 处理完成，共处理 {processed_count} 部电视剧"
-                    )
+                        logger.info(
+                            f"媒体库 {library_name} 处理完成，共处理 {processed_count} 部电视剧"
+                        )
+                    except Exception as e:
+                        logger.error(f"处理媒体库 {library_id} 时出错：{str(e)}")
+                        logger.warning(f"跳过媒体库 {library_id}，继续处理其他媒体库")
 
                 logger.info("所有媒体库剧集检查完成")
             finally:
