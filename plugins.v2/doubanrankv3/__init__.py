@@ -24,7 +24,7 @@ from app.utils.http import RequestUtils
 
 class DoubanRankV3(_PluginBase):
     # 插件名称
-    plugin_name = "DoubanRankV3"
+    plugin_name = "豆瓣榜单订阅V3"
     # 插件描述
     plugin_desc = "监控豆瓣热门榜单，自动添加订阅。修复官方无法识别媒体信息的问题"
     # 插件图标
