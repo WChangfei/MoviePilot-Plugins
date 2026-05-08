@@ -640,7 +640,6 @@ class DoubanRankV3(_PluginBase):
                 else:
                     logger.info(f"RSS地址：{addr} ，共 {len(rss_infos)} 条数据")
                 for idx, rss_info in enumerate(rss_infos, 1):
-                    logger.info(f"正在处理第 {idx}/{len(rss_infos)} 条数据")
                     try:
                         if self._event.is_set():
                             logger.info(f"订阅服务停止")
@@ -648,6 +647,9 @@ class DoubanRankV3(_PluginBase):
                         mtype = None
                         title = rss_info.get("title")
                         douban_id = rss_info.get("doubanid")
+                        logger.info(
+                            f"正在处理第 {idx}/{len(rss_infos)} 条数据: {title} (豆瓣ID: {douban_id})"
+                        )
                         year = rss_info.get("year")
                         # 尝试转换年份为整数
                         year_int = None
@@ -664,6 +666,7 @@ class DoubanRankV3(_PluginBase):
                         unique_flag = f"doubanrankV3: {title} (DB:{douban_id})"
                         # 检查是否已处理过
                         if unique_flag in [h.get("unique") for h in history]:
+                            logger.info(f"{title} 历史记录中已处理过，跳过")
                             continue
                         # 检查标题黑名单
                         blacklisted = False
