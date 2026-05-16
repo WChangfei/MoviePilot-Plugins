@@ -1,4 +1,13 @@
 {
+  "HongGuoSubscribe": {
+    "name": "红果短剧订阅",
+    "description": "定时从红果短剧网站获取短剧列表，搜索PTSKIT并下载或订阅",
+    "labels": "订阅",
+    "version": "1.0",
+    "icon": "hongguo.png",
+    "author": "WChangfei",
+    "level": 2
+  },
   "DoubanRankV3": {
     "name": "豆瓣榜单订阅V3",
     "description": "修复官方插件无法识别到媒体信息的问题",
